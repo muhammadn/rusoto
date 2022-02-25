@@ -245,7 +245,7 @@ impl<P: ProvideAwsCredentials + Send + Sync> ProvideAwsCredentials for Arc<P> {
 #[derive(Debug, Clone)]
 pub struct AutoRefreshingProvider<P: ProvideAwsCredentials + 'static> {
     credentials_provider: P,
-    current_credentials: Arc<Mutex<Option<Result<AwsCredentials>>>,
+    current_credentials: Arc<Mutex<Option<AwsCredentials>>>,
 }
 
 impl<P: ProvideAwsCredentials + 'static> AutoRefreshingProvider<P> {
