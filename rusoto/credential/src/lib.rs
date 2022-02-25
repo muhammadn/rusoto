@@ -245,7 +245,7 @@ impl<P: ProvideAwsCredentials + Send + Sync> ProvideAwsCredentials for Arc<P> {
 #[derive(Debug, Clone)]
 pub struct AutoRefreshingProvider<P: ProvideAwsCredentials + 'static> {
     credentials_provider: P,
-    current_credentials: Arc<Mutex<Option<Result<AwsCredentials, CredentialsError>>>>,
+    current_credentials: Arc<Mutex<Option<Result<AwsCredentials>>>,
 }
 
 impl<P: ProvideAwsCredentials + 'static> AutoRefreshingProvider<P> {
@@ -281,11 +281,10 @@ impl<P: ProvideAwsCredentials + Send + Sync + 'static> ProvideAwsCredentials
             match guard.as_ref() {
                 // no result from the future yet, let's keep using it
                 None => {
-                    let res = self.credentials_provider.credentials().await;
+                    let res = self.credentials_provider.credentials().await?;
                     *guard = Some(res);
                 }
-                Some(Err(e)) => return Err(e.clone()),
-                Some(Ok(creds)) => {
+                Some(creds) => {
                     if creds.credentials_are_expired() {
                         *guard = None;
                     } else {
@@ -501,6 +500,63 @@ mod tests {
 
         assert_eq!(credentials.aws_access_key_id(), "foo_access_key");
         assert_eq!(credentials.aws_secret_access_key(), "foo_secret_key");
+    }
+
+    #[tokio::test]
+    async fn auto_refreshing_provider_does_not_caches_on_ok() {
+        let err_provider = ProviderStub {
+            responses: Mutex::new(vec![
+                Ok(AwsCredentials::new(
+                    "1",
+                    "",
+                    Some("".to_string()),
+                    Some(chrono::MAX_DATETIME),
+                )),
+                Ok(AwsCredentials::new(
+                    "2",
+                    "",
+                    Some("".to_string()),
+                    Some(chrono::MAX_DATETIME),
+                )),
+            ]),
+        };
+        let provider = AutoRefreshingProvider::new(err_provider).expect("failed getting provider");
+        let creds = provider.credentials().await.expect("unexpected error");
+        assert_eq!(creds.aws_access_key_id(), "1");
+        let creds = provider.credentials().await.expect("unexpected error");
+        assert_eq!(creds.aws_access_key_id(), "1");
+    }
+
+    #[tokio::test]
+    async fn auto_refreshing_provider_does_not_cache_on_error() {
+        let err_provider = ProviderStub {
+            responses: Mutex::new(vec![
+                Err(CredentialsError::new("err")),
+                Ok(AwsCredentials::new(
+                    "",
+                    "",
+                    Some("".to_string()),
+                    Some(chrono::MAX_DATETIME),
+                )),
+            ]),
+        };
+        let provider = AutoRefreshingProvider::new(err_provider).expect("failed getting provider");
+        let res = provider.credentials().await;
+        assert!(res.is_err());
+        let res = provider.credentials().await;
+        assert!(res.is_ok());
+    }
+
+    struct ProviderStub {
+        responses: Mutex<Vec<Result<AwsCredentials, CredentialsError>>>,
+    }
+
+    #[async_trait]
+    impl ProvideAwsCredentials for ProviderStub {
+        async fn credentials(&self) -> Result<AwsCredentials, CredentialsError> {
+            let mut guard = self.responses.lock().await;
+            guard.remove(0)
+        }
     }
 
     #[test]
