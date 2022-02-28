@@ -245,7 +245,7 @@ impl<P: ProvideAwsCredentials + Send + Sync> ProvideAwsCredentials for Arc<P> {
 #[derive(Debug, Clone)]
 pub struct AutoRefreshingProvider<P: ProvideAwsCredentials + 'static> {
     credentials_provider: P,
-    current_credentials: Arc<Mutex<Option<Result<AwsCredentials, CredentialsError>>>>,
+    current_credentials: Arc<Mutex<Option<AwsCredentials>>>,
 }
 
 impl<P: ProvideAwsCredentials + 'static> AutoRefreshingProvider<P> {
@@ -281,11 +281,10 @@ impl<P: ProvideAwsCredentials + Send + Sync + 'static> ProvideAwsCredentials
             match guard.as_ref() {
                 // no result from the future yet, let's keep using it
                 None => {
-                    let res = self.credentials_provider.credentials().await;
+                    let res = self.credentials_provider.credentials().await?;
                     *guard = Some(res);
                 }
-                Some(Err(e)) => return Err(e.clone()),
-                Some(Ok(creds)) => {
+                Some(creds) => {
                     if creds.credentials_are_expired() {
                         *guard = None;
                     } else {
